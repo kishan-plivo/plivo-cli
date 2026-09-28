@@ -1,6 +1,6 @@
 ---
 name: plivo-sip-trunking
-description: Connect an AI voice platform (LiveKit, ElevenLabs, Retell, Vapi, a self-hosted stack or any SIP-capable agent) to phone calls with Plivo SIP trunking (Zentrunk) and take it live, using the Plivo CLI. Load this for "SIP trunk", "Zentrunk", "origination URI", "termination domain", "<platform> + Plivo", "call not reaching my platform", "inbound trunk / outbound trunk", "transport tcp/tls/udp", "media anchoring", a Zentrunk hangup code (4090, 4170, 4590, 4000, 4550 and others) or SIP response (404/407/408/480/486/503) on a trunk call, SIP REFER / transfer to a human from an agent, India KYC for a trunk number, or "am I ready to go live on SIP". Readiness check first, then six stages with one check each, a read-only readiness checklist, a URI format check, a hangup-code table with owner and fix, and a CLI-first debugging order. Self-contained: it carries everything the SIP trunking journey needs, including the India prerequisites, and points at plivo-audio-streaming, plivo-voice-xml and plivo-cli as separate installs for work outside that journey.
+description: Connect an AI voice platform (LiveKit, ElevenLabs, Retell, Vapi, xAI Voice Agents, a self-hosted stack or any SIP-capable agent) to phone calls with Plivo SIP trunking (Zentrunk) and take it live, using the Plivo CLI. Load this for "SIP trunk", "Zentrunk", "origination URI", "termination domain", "<platform> + Plivo", "call not reaching my platform", "inbound trunk / outbound trunk", "transport tcp/tls/udp", "media anchoring", a Zentrunk hangup code (4090, 4170, 4590, 4000, 4550 and others) or SIP response (404/407/408/480/486/503) on a trunk call, SIP REFER / transfer to a human from an agent, India KYC for a trunk number, or "am I ready to go live on SIP". Readiness check first, then six stages with one check each, a read-only readiness checklist, a URI format check, a hangup-code table with owner and fix, and a CLI-first debugging order. Self-contained: it carries everything the SIP trunking journey needs, including the India prerequisites, and points at plivo-audio-streaming, plivo-voice-xml and plivo-cli as separate installs for work outside that journey.
 license: Apache-2.0
 ---
 
@@ -22,11 +22,11 @@ You are guiding a developer (or their coding agent) from "I have an agent on pla
 
 Two objects do the work. An **inbound trunk** carries calls *to* the platform: origination URI, trunk, number attached. An **outbound trunk** carries calls *from* it: credential or IP list, trunk, its `trunk_domain`. Only inbound trunks attach to numbers (<https://www.plivo.com/docs/sip-trunking/api/trunks>). The URI string `host[:port];transport=...` is the whole inbound integration. The generic guide says a transport **mismatch** is the most common reason an inbound integration fails silently (<https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/other-platforms>). Omitting `;transport=` is not the same thing: Plivo's own API examples publish URIs with no transport parameter, and a missing one is read as UDP, so treat an absent transport as a risk to check against what the platform documents rather than a fault.
 
-Use the Plivo CLI for every Plivo-side step: typed commands where they exist (`plivo numbers ...`, `plivo account ...`), the generic `plivo api <METHOD> /Zentrunk/...` everywhere else. **The CLI has no trunk commands**; check with `plivo --help` and never invent a flag. Preview every mutation with `--dry-run`, show the previewed request, and get the user's approval before running the same command with `--yes`. Where a step has no CLI path this file says "console only".
+Use the Plivo CLI for every Plivo-side step. Trunks, origination URIs, credentials, IP access control lists and trunk call records have typed commands under `plivo sip` (`plivo sip trunks|uris|credentials|ip-acl|calls ...`, since CLI v1.1.0), and `plivo numbers update --trunk-id` attaches a number to an inbound trunk. Use the generic `plivo api <METHOD> /Zentrunk/...` only for what those commands do not cover, such as call Insights. Check with `plivo sip --help` and never invent a flag. Preview every mutation with `--dry-run`, show the previewed request, and get the user's approval before running the same command with `--yes`. Where a step has no CLI path this file says "console only".
 
-**What this file assumes you have: nothing but this file and the `plivo` CLI.** Everything the SIP trunking journey needs is here, including the India prerequisites. Other Plivo skills are separate single files you may not have. Install one only if the task moves outside this journey: `npx skills add https://www.plivo.com/docs --skill plivo-voice-xml` for Plivo XML and answer URLs, `npx skills add https://www.plivo.com/docs --skill plivo-audio-streaming` for a WebSocket voice bot, and `plivo skill install` for the CLI's own reference. If none is installed, use `plivo <command> --help` and <https://www.plivo.com/docs/llms.txt>, and say which source you used.
+**What this file assumes you have: nothing but this file and the `plivo` CLI.** Everything the SIP trunking journey needs is here, including the India prerequisites. Other Plivo skills are separate single files you may not have. Install one only if the task moves outside this journey; they ship inside the CLI: `plivo skill install voice-xml` for Plivo XML and answer URLs, `plivo skill install audio-streaming` for a WebSocket voice bot, and `plivo skill install cli` for the CLI's own reference. If none is installed, use `plivo <command> --help` and <https://www.plivo.com/docs/llms.txt>, and say which source you used.
 
-What is in this file, in order: the readiness checklist, prerequisites by country, six stages, go-live, the debugging order with a short code table, what not to do, then the deep sections (India, security and limits, the platform table, request bodies to copy, SIP REFER, the Zentrunk API, the full hangup-code table).
+What is in this file, in order: the readiness checklist, prerequisites by country, six stages, go-live, the debugging order with a short code table, what not to do, then the deep sections (India, security and limits, the platform table, request bodies for the `plivo api` fallback, SIP REFER, the Zentrunk objects and their commands, the full hangup-code table).
 
 Three questions before anything else: inbound, outbound or both (Retell needs the outbound trunk even for inbound-only)? Which platform, hosted or self-hosted? Which country are the numbers and callees in (India changes the rules below)?
 
@@ -36,14 +36,14 @@ Read-only. Nothing here changes anything. Run in order and stop at the first blo
 
 1. `plivo auth whoami -o json` and `plivo account get -o json`. Look for: the account you meant, and `cash_credits` above zero. Inbound trunk calls are billed too, so a zero balance stops inbound as well; every call then ends 4030.
 2. `plivo numbers get <number> -o json`. Look for: the number is on this account and `voice_enabled` is true. The live API also returns `active` and, for Indian numbers, `compliance_status`; neither is in the published phone number schema, so treat a missing field as "not known" rather than as a pass or a failure, and confirm India compliance with `plivo numbers compliance list --country IN --status accepted -o json`. Note the `application` field: it is the current binding and your rollback value.
-3. Take the id out of the `application` field and read the trunk: `plivo api GET /Zentrunk/Trunk/<id>/ -o json`. How that field renders is not documented, so handle three cases rather than assuming one: a URL containing `Trunk/<id>` means an inbound trunk, a URL containing `Application/<id>` means an XML application and not a trunk at all (stop here, the number is not on SIP trunking), and a bare id means try the trunk GET and fall back to `plivo account applications get <id>` if it 404s. Say which of the three you saw. Look for: `trunk_direction` is `inbound` (an outbound trunk or an XML application cannot carry inbound), `trunk_status` is `enabled`, and `primary_uri_uuid` is set. A trunk with no primary URI has nowhere to send the call; the published 4310 row is `uri_not_found`, "Origination URI not found", so expect that code rather than asserting it for every call.
-4. `plivo api GET /Zentrunk/URI/<primary_uri_uuid>/ -o json`. Look for: a URI that passes the URI checklist in stage 2 and matches the platform table. Check `authentication_needed` is set only when the platform challenges Plivo, and that the trunk's `secure` flag agrees with `;transport=tls`.
-5. `plivo api GET /Zentrunk/URI/<fallback_uri_uuid>/ -o json`. A missing fallback URI is a warning, not a blocker: it is the only way Plivo re-routes when the primary is unreachable or returns an error.
-6. Outbound only: `plivo api GET /Zentrunk/Trunk/ --query trunk_direction=outbound --query limit=20 -o json` (paginate with `--query offset=N`), then `plivo api GET /Zentrunk/IPAccessControlList/<ipacl_uuid>/ -o json` when one is used. Look for: an enabled outbound trunk with a credential or a narrow IP list; no `0.0.0.0/0`, no `/0`, no `/1`. Vapi needs its two `/32` addresses. Retell will not import a number without its termination URI, even inbound only; the username and password fields on its import form are not marked required, so create the credential without claiming the import fails without it.
+3. Take the id out of the `application` field and read the trunk: `plivo sip trunks get <id> -o json`. How that field renders is not documented, so handle three cases rather than assuming one: a URL containing `Trunk/<id>` means an inbound trunk, a URL containing `Application/<id>` means an XML application and not a trunk at all (stop here, the number is not on SIP trunking), and a bare id means try `plivo sip trunks get` and fall back to `plivo account applications get <id>` if it 404s. Say which of the three you saw. Look for: `trunk_direction` is `inbound` (an outbound trunk or an XML application cannot carry inbound), `trunk_status` is `enabled`, and `primary_uri_uuid` is set. A trunk with no primary URI has nowhere to send the call; the published 4310 row is `uri_not_found`, "Origination URI not found", so expect that code rather than asserting it for every call.
+4. `plivo sip uris get <primary_uri_uuid> -o json`. Look for: a URI that passes the URI checklist in stage 2 and matches the platform table. Check `authentication_needed` is set only when the platform challenges Plivo, and that the trunk's `secure` flag agrees with `;transport=tls`.
+5. `plivo sip uris get <fallback_uri_uuid> -o json`. A missing fallback URI is a warning, not a blocker: it is the only way Plivo re-routes when the primary is unreachable or returns an error.
+6. Outbound only: `plivo sip trunks list --direction outbound -o json` (20 rows per page; page with `--offset 20`), then `plivo sip ip-acl get <ipacl_uuid> -o json` when one is used. Look for: an enabled outbound trunk with a credential or a narrow IP list; no `0.0.0.0/0`, no `/0`, no `/1`. Vapi needs its two `/32` addresses. Retell will not import a number without its termination URI, even inbound only; the username and password fields on its import form are not marked required, so create the credential without claiming the import fails without it.
 7. Ask the platform-side questions in stage 3. Plivo cannot see any of them, and they cause 4090 and 4410.
 8. Optional reachability probe: one SIP OPTIONS to the URI host over its transport. A timeout proves nothing, because hosted platforms may ignore OPTIONS from unknown sources; a DNS or TLS error does prove something.
 
-There is no single CLI command that runs this checklist, and no `plivo sip` command tree at all. Run the steps by hand, in order.
+There is no single CLI command that runs this checklist. Run the steps by hand, in order.
 
 | Check | Verified how | Failure it prevents |
 |---|---|---|
@@ -79,7 +79,7 @@ plivo numbers compliance list --country IN --status accepted -o json   # India o
 
 ## Stage 2: Inbound, Plivo side
 
-Pick the URI from the table (detail and India variants in "Platforms" below; request bodies to copy in "Request bodies for `plivo api`"):
+Pick the URI from the table (detail and India variants in "Platforms" below):
 
 | Platform | URI | Outbound auth |
 |---|---|---|
@@ -87,21 +87,22 @@ Pick the URI from the table (detail and India variants in "Platforms" below; req
 | ElevenLabs | `sip.rtc.elevenlabs.io:5060;transport=tcp` or `:5061;transport=tls` | credentials |
 | Retell | `sip.retellai.com;transport=tcp` (or `tls`) | credentials, required by Retell |
 | Vapi | `sip.vapi.ai;transport=udp` | IP list `44.229.228.186/32`, `44.238.177.138/32` |
+| xAI Voice Agents | `sip.voice.x.ai;transport=tls` | none: xAI answers inbound calls only. On the xAI side, allow Plivo's signalling IP ranges on the number, or use SIP digest credentials |
 | Other or self-hosted | `<host>[:port];transport=<what it documents>`; the API also accepts `sip:user@host` | credentials, or its static IPs |
 
-Plivo publishes an integration guide for LiveKit, ElevenLabs, Retell and Vapi, and a generic guide for everything else. If the platform you were asked about is not one of the four, including OpenAI Realtime and xAI, say that Plivo does not document it, then use the "Other or self-hosted" row with the host, port and transport that platform publishes. Do not compose a hostname or guess a transport.
+Plivo publishes an integration guide for LiveKit, ElevenLabs, Retell, Vapi and xAI Voice Agents, and a generic guide for everything else. If the platform you were asked about is not one of the five, including OpenAI Realtime, say that Plivo does not document it, then use the "Other or self-hosted" row with the host, port and transport that platform publishes. Do not compose a hostname or guess a transport.
 
-Sources: <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/livekit>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/elevenlabs>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/retell>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/vapi>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/other-platforms>, <https://www.plivo.com/docs/sip-trunking/api/origination-uris>.
+Sources: <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/livekit>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/elevenlabs>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/retell>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/vapi>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/xai-voice-agents>, <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guides/other-platforms>, <https://www.plivo.com/docs/sip-trunking/api/origination-uris>.
 
 ```bash
-plivo api POST /Zentrunk/URI/   --body @uri.json --dry-run       # preview: prints the request, sends nothing
-plivo api POST /Zentrunk/URI/   --body @uri.json --yes           # only after the user approves the previewed body  (data.uri_uuid)
-plivo api GET  /Zentrunk/URI/<uri_uuid>/ -o json                 # read back what was actually stored
-plivo api POST /Zentrunk/Trunk/ --body @trunk-inbound.json --dry-run   # after editing primary_uri_uuid
-plivo api POST /Zentrunk/Trunk/ --body @trunk-inbound.json --yes       # after approval  (data.trunk_id)
+plivo sip uris create --name <name> --uri '<host[:port];transport=...>' --dry-run   # preview: prints the request, sends nothing
+plivo sip uris create --name <name> --uri '<host[:port];transport=...>' --yes       # only after the user approves  (uri_uuid)
+plivo sip uris get <uri_uuid> -o json                                               # read back what was actually stored
+plivo sip trunks create --name <name> --direction inbound --uri <uri_uuid> [--fallback-uri <uuid>] [--secure] --dry-run
+plivo sip trunks create --name <name> --direction inbound --uri <uri_uuid> [--fallback-uri <uuid>] [--secure] --yes   # (trunk_id)
 plivo numbers get <number> -o json                        # note the current binding: this is your rollback value
-plivo numbers update <number> --app-id <trunk_id> --dry-run   # app_id accepts an inbound trunk_id; there is no --trunk-id flag
-plivo numbers update <number> --app-id <trunk_id> --yes       # only after the user approves; this reroutes a live number
+plivo numbers update <number> --trunk-id <trunk_id> --dry-run   # an outbound trunk is refused; the preview shows the request
+plivo numbers update <number> --trunk-id <trunk_id> --yes       # only after the user approves; this reroutes a live number
 plivo numbers get <number> -o json                        # confirm it now points at the trunk
 ```
 
@@ -137,13 +138,13 @@ Plivo cannot see this, so ask and confirm (<https://www.plivo.com/docs/voice-age
 ## Stage 4: Outbound
 
 ```bash
-# write the credential JSON first (username 5 to 20 alphanumeric; password 5 to 20 chars with one of ~!@#$%^&*()_+); never on the command line
-plivo api POST /Zentrunk/Credential/ --body @cred.json --dry-run        # preview (the preview shows the body, so do not paste it into chat)
-plivo api POST /Zentrunk/Credential/ --body @cred.json --yes            # after approval  (data.credential_uuid)
-#   or for Vapi:  plivo api POST /Zentrunk/IPAccessControlList/ --body @ipacl.json --dry-run, then --yes   # data.ipacl_uuid
-plivo api POST /Zentrunk/Trunk/ --body @trunk-outbound.json --dry-run   # after editing credential_uuid
-plivo api POST /Zentrunk/Trunk/ --body @trunk-outbound.json --yes       # after approval
-plivo api GET  /Zentrunk/Trunk/<trunk_id>/ -o json          # data.object.trunk_domain = <trunk_id>.zt.plivo.com (the create response has no domain)
+# username 5 to 20 alphanumeric; password 5 to 20 chars with one of ~!@#$%^&*()_+. The password is read from stdin only, never a flag.
+printf '%s' "$SIP_PASSWORD" | plivo sip credentials create --name <name> --username <username> --password-stdin --dry-run
+printf '%s' "$SIP_PASSWORD" | plivo sip credentials create --name <name> --username <username> --password-stdin --yes   # (credential_uuid)
+#   or for Vapi:  plivo sip ip-acl create --name vapi --ip 44.229.228.186/32 --ip 44.238.177.138/32 --dry-run, then --yes   # (ipacl_uuid)
+plivo sip trunks create --name <name> --direction outbound --credential <credential_uuid> [--secure] --dry-run   # or --ip-acl <ipacl_uuid>
+plivo sip trunks create --name <name> --direction outbound --credential <credential_uuid> [--secure] --yes       # prints trunk_domain
+plivo sip trunks get <trunk_id> -o json          # trunk_domain = <trunk_id>.zt.plivo.com
 ```
 
 Put `trunk_domain` (no `sip:`, no spaces), the credential **username** (not its name) and password into the platform's outbound trunk or number import. Caller ID = a Plivo number on this account. `secure: true` here means TLS in the platform too (Retell "Outbound Transport = TLS", LiveKit secure trunking).
@@ -155,7 +156,7 @@ Put `trunk_domain` (no `sip:`, no spaces), the credential **username** (not its 
 Dial the number from a phone; then place one outbound call from the platform to your own phone. Then read what Plivo saw:
 
 ```bash
-plivo api GET /Zentrunk/Call/ --query limit=5 -o json                        # newest records: hangup_cause_code, hangup_cause_name, hangup_source, transport_protocol, srtp
+plivo sip calls list --limit 5 -o json                                      # newest records: hangup_cause_code, hangup_cause_name, hangup_source, transport_protocol, srtp
 plivo api GET /Zentrunk/Call/<call_uuid>/Insights/ -o json                   # rtt, jitter, packet_loss, plivo_quality_score
 ```
 
@@ -173,14 +174,14 @@ The platform sends `REFER` with `Refer-To: <sip:+14155551234@<trunk_id>.zt.plivo
 - Geo permissions trimmed to the countries you call (console only). Credentials never pasted anywhere; IP lists narrow.
 - India: KYC accepted on every number, platform pinned to India, consent captured. US: Plivo caller ID, dialer under the CPS limit.
 - A fallback URI, and a `secure` decision made on both sides.
-- Watch daily: `plivo api GET /Zentrunk/Call/ --query hangup_cause_code=4090 --query limit=20 -o json` (and 4170, 4590, 4030). Outbound agents see 4410, 4340 and 4550 every day; those are outcomes, not faults.
+- Watch daily: `plivo sip calls list --hangup-cause-code 4090 -o json` (and 4170, 4590, 4030). Outbound agents see 4410, 4340 and 4550 every day; those are outcomes, not faults.
 
 ## Debugging with the CLI, in this order
 
-1. `plivo api GET /Zentrunk/Call/ --query limit=20 -o json` (filters: `call_direction`, `hangup_cause_code`, `hangup_source`, `from_number`, `to_number`, `end_time__gte=YYYY-MM-DD HH:MM`); then `plivo api GET /Zentrunk/Call/<uuid>/ -o json` and `.../Insights/`.
+1. `plivo sip calls list -o json` (filters: `--direction`, `--hangup-cause-code`, `--hangup-source`, `--from-number`, `--to-number`, `--since`/`--until YYYY-MM-DD[ HH:MM]`); then `plivo sip calls get <uuid> -o json`, and `plivo api GET /Zentrunk/Call/<uuid>/Insights/ -o json` for quality.
 2. Map the code with the table below, or with the full table in "Zentrunk hangup codes" at the end. `hangup_source`: `customer` = your platform, `carrier` = network side, `zentrunk` = Plivo.
 3. Console Zentrunk, Logs, the call: **Call Stats** (trunk, transport, secure) and **SIP logs** (message flow, final response, PCAP). Trust the hangup code for Plivo's conclusion and the SIP flow for what the platform said; they can disagree. Read it in three lines: inbound with no INVITE towards your URI = Plivo refused (4590, 4030 or 4310); INVITE repeated with no reply = 4170; the platform's own 4xx is the answer (404 = not imported, 401/407 = your server challenged Plivo, 486 = no dispatch rule or agent, 503 = platform down). Outbound on a credential-authenticated trunk: one 407 then a second INVITE is normal, and a flow that **ends** at 407 means the credentials are wrong, whatever the hangup code says. On an IP ACL trunk there is no 407 at all.
-4. `plivo voice calls diagnose <uuid>` is built for Voice API calls; whether it accepts a trunk call UUID is not verified. Try it once; do not loop it (rate limited with `plivo ask`). Then `plivo ask --call-uuid <uuid> "..."` or Plivo support with the UUID and the PCAP.
+4. `plivo sip calls diagnose <uuid>` asks Plivo's assistant to explain a trunk call. It depends on server-side support and can report that the call could not be retrieved; if so, use `plivo sip calls get` and the console SIP logs. Try it once; do not loop it (rate limited together with `plivo ask`). Then `plivo ask --call-uuid <uuid> "..."` or Plivo support with the UUID and the PCAP.
 
 The public hangup-code table publishes a code, a name, a cause and a fix. It does not publish the SIP response that goes with each code. The **SIP seen** column below is therefore observational, gathered from SIP flows, not a Plivo contract: use it to recognise a flow you are already looking at, never as the reason for a conclusion. Where a row names a code as documented it is from the public table.
 
@@ -314,7 +315,7 @@ Sources: <https://www.plivo.com/docs/voice-agents/sip-trunking/integration-guide
 
 ### Platforms Plivo does not document
 
-Plivo publishes SIP trunking integration guides for LiveKit, ElevenLabs, Retell and Vapi, plus one generic guide for everything else. Some platforms customers ask about, including OpenAI Realtime and xAI, have no Plivo guide at all.
+Plivo publishes SIP trunking integration guides for LiveKit, ElevenLabs, Retell, Vapi and xAI Voice Agents, plus one generic guide for everything else. Some platforms customers ask about, including OpenAI Realtime, have no Plivo guide at all.
 
 For those, say so plainly, then follow the "Other or self-hosted" row. Get the SIP host, the port and the transport from that platform's own documentation, and get the corresponding Plivo-side requirements from Plivo. Do not invent a hostname, a transport, or an API field to carry a value the Origination URI API does not document: `/Zentrunk/URI/` documents `uri`, `authentication_needed`, `username` and `password`, and nothing else. If a platform needs something outside that set, that is a question for Plivo before it is a request body.
 
@@ -342,11 +343,11 @@ The docs describe the handshake in words: the trunk challenges the INVITE and th
 | A platform Plivo does not document | What SIP host, port and transport does it publish, and what does it need on the Plivo side? Confirm both with the platform and with Plivo before creating anything. |
 | Self-hosted | Is Plivo allowed through your firewall on 5060/5061 and UDP 10000 to 30000, and does your server accept INVITEs from Plivo without a digest challenge, or are the same credentials on the Plivo URI? |
 
-## Request bodies for `plivo api`, one subsection per platform
+## Request bodies for the `plivo api` fallback, one subsection per platform
 
-Usage: write the body to a file, then `plivo api POST /Zentrunk/URI/ --body @uri.json --dry-run`, then the same with `--yes` once the user approves. Replace every `<...>` placeholder first. Passwords: edit the file, never paste them on a command line. Order: URI, inbound trunk, attach the number; credential or IP list, outbound trunk, then GET the trunk to read `trunk_domain`. Fields come from the API reference: <https://www.plivo.com/docs/sip-trunking/api/origination-uris>, <https://www.plivo.com/docs/sip-trunking/api/trunks>, <https://www.plivo.com/docs/sip-trunking/api/credentials>, <https://www.plivo.com/docs/sip-trunking/api/ip-access-control-lists>.
+Prefer the typed `plivo sip` commands in stages 2 and 4: they validate input and never take a password as a flag. These bodies are the same objects as JSON, for a field no flag covers or when a typed command is unavailable. Usage: write the body to a file, then `plivo api POST /Zentrunk/URI/ --body @uri.json --dry-run`, then the same with `--yes` once the user approves. Replace every `<...>` placeholder first. Passwords: edit the file, never paste them on a command line. Order: URI, inbound trunk, attach the number; credential or IP list, outbound trunk, then GET the trunk to read `trunk_domain`. Fields come from the API reference: <https://www.plivo.com/docs/sip-trunking/api/origination-uris>, <https://www.plivo.com/docs/sip-trunking/api/trunks>, <https://www.plivo.com/docs/sip-trunking/api/credentials>, <https://www.plivo.com/docs/sip-trunking/api/ip-access-control-lists>.
 
-Attaching the number is the same for every platform. The Number API's `app_id` accepts an inbound `trunk_id`; there is no `--trunk-id` flag. Pass the number as digits without `+`.
+Attaching the number is the same for every platform: `plivo numbers update <number> --trunk-id <trunk_id>` (the Number API stores it in `app_id`). Pass the number as digits without `+`.
 
 ```bash
 plivo numbers get <number digits> -o json                              # note the current application for rollback
@@ -620,7 +621,7 @@ Use the host and transport the platform documents. The fallback URI is used when
 
 ### A platform Plivo does not document
 
-There is no fifth set of request bodies here, on purpose. Plivo publishes SIP trunking integration guides for LiveKit, ElevenLabs, Retell and Vapi, plus one generic guide for anything else. For a platform with no Plivo guide, including OpenAI Realtime and xAI, use the "Other or self-hosted" bodies above and fill them in like this:
+There is no set of request bodies for other platforms here, on purpose. Plivo publishes SIP trunking integration guides for LiveKit, ElevenLabs, Retell, Vapi and xAI Voice Agents (xAI is inbound only: `plivo sip uris create --uri 'sip.voice.x.ai;transport=tls'`, then an inbound trunk; see its guide), plus one generic guide for anything else. For a platform with no Plivo guide, including OpenAI Realtime, use the "Other or self-hosted" bodies above and fill them in like this:
 
 1. Ask the platform for the exact SIP host, port and transport it expects for inbound calls, and for the source IPs or credentials it uses outbound. Copy those values; do not compose a hostname from parts.
 2. Check them against the URI checklist in stage 2, which is platform-independent: a bare host, a numeric port if any, `;transport=` set to `udp`, `tcp` or `tls`, no scheme unless the platform asks for the `sip:user@host` form the API documents, and no private address.
@@ -684,9 +685,9 @@ The documented outbound target form is `sip:+E164@<trunk_id>.zt.plivo.com`. Writ
 | `NOTIFY 100 Trying` then nothing | the agent leg ended early; keep it up until a final NOTIFY |
 | No audio after transfer | codec mismatch between legs; Plivo support with the Call-ID |
 
-## The Zentrunk API through `plivo api` (exact paths and fields)
+## The Zentrunk objects: commands, API paths and fields
 
-The CLI has **no typed SIP trunk commands**: no `plivo sip ...`, no trunk, URI, credential or IP-list command, no geo-permissions command. Every trunk object goes through the generic escape hatch `plivo api <METHOD> <path>`. Account-scoped paths such as `/Zentrunk/Trunk/` expand to `/v1/Account/<auth_id>/Zentrunk/Trunk/`. POST, PUT, PATCH and DELETE need `--yes`; `--dry-run` previews without sending. JSON output is `{"data": ...}`; list endpoints return `data.meta` and `data.objects`; a single trunk comes back under `data.object`. Page size 1 to 20 (`--query limit=20 --query offset=20`). The only typed commands this skill uses are `plivo numbers get|list|update|compliance ...`, `plivo account get`, `plivo auth whoami`.
+Each object has a typed `plivo sip` command (CLI v1.1.0 and later) and an API path for the `plivo api` fallback. There is still no geo-permissions command. Deletes first name what depends on the object (a URI or credential in use by a trunk, numbers attached to a trunk) and need `--yes`. Account-scoped paths such as `/Zentrunk/Trunk/` expand to `/v1/Account/<auth_id>/Zentrunk/Trunk/`. POST, PUT, PATCH and DELETE need `--yes`; `--dry-run` previews without sending. JSON output is `{"data": ...}`; list endpoints return `data.meta` and `data.objects`; a single trunk comes back under `data.object`. Page size 1 to 20 (`--limit` and `--offset` on the typed lists; `--query limit=20 --query offset=20` on `plivo api`). Typed commands this skill uses: `plivo sip trunks|uris|credentials|ip-acl|calls ...`, `plivo numbers get|list|update|compliance ...`, `plivo account get`, `plivo auth whoami`.
 
 Docs: <https://www.plivo.com/docs/sip-trunking/api/overview>, <https://www.plivo.com/docs/sip-trunking/api/trunks>, <https://www.plivo.com/docs/sip-trunking/api/origination-uris>, <https://www.plivo.com/docs/sip-trunking/api/credentials>, <https://www.plivo.com/docs/sip-trunking/api/ip-access-control-lists>, <https://www.plivo.com/docs/sip-trunking/api/calls>.
 
@@ -699,13 +700,12 @@ Docs: <https://www.plivo.com/docs/sip-trunking/api/overview>, <https://www.plivo
 | `username`, `password` | required when `authentication_needed=true`; password never returned |
 
 ```bash
-plivo api POST /Zentrunk/URI/ --body @uri.json --dry-run     # preview, then run again with --yes after approval
-plivo api GET  /Zentrunk/URI/ -o json                        # read-only: data.objects[].uri_uuid, .uri
-plivo api GET  /Zentrunk/URI/<uri_uuid>/ -o json             # read-only
-plivo api POST /Zentrunk/URI/<uri_uuid>/ --body '{"uri":"sip.rtc.elevenlabs.io:5061;transport=tls"}' --dry-run   # update: preview
-plivo api POST /Zentrunk/URI/<uri_uuid>/ --body '{"uri":"sip.rtc.elevenlabs.io:5061;transport=tls"}' --yes       # then apply
-plivo api DELETE /Zentrunk/URI/<uri_uuid>/ --dry-run  # preview: read the URI first and record it, this is not undoable
-plivo api DELETE /Zentrunk/URI/<uri_uuid>/ --yes      # a URI attached to a live trunk: inbound calls fail at once
+plivo sip uris create --name <name> --uri '<uri>' [--authentication-needed --username <u> --password-stdin] --dry-run   # then --yes
+plivo sip uris list -o json                                  # read-only: uri_uuid, uri
+plivo sip uris get <uri_uuid> -o json                        # read-only
+plivo sip uris update <uri_uuid> --uri 'sip.rtc.elevenlabs.io:5061;transport=tls' --dry-run   # update: preview, then --yes
+plivo sip uris delete <uri_uuid> --dry-run   # names the trunks using it; deleting a URI in use removes those trunks too
+plivo sip uris delete <uri_uuid> --yes       # read the URI first and record it, this is not undoable
 ```
 
 ### Trunk (`/Zentrunk/Trunk/`)
@@ -720,11 +720,12 @@ plivo api DELETE /Zentrunk/URI/<uri_uuid>/ --yes      # a URI attached to a live
 | `trunk_id`, `trunk_domain` | read-only; `trunk_domain` = `<trunk_id>.zt.plivo.com`, the termination domain the platform dials. GET the trunk to read it. |
 
 ```bash
-plivo api POST /Zentrunk/Trunk/ --body @trunk-inbound.json --dry-run    # preview, then --yes after approval
-plivo api POST /Zentrunk/Trunk/ --body @trunk-outbound.json --dry-run   # preview, then --yes after approval
-plivo api GET  /Zentrunk/Trunk/ --query trunk_direction=inbound --query limit=20 -o json   # read-only
-plivo api GET  /Zentrunk/Trunk/<trunk_id>/ -o json          # read-only: data.object.trunk_domain, .trunk_status, .secure, .primary_uri_uuid
-plivo api POST /Zentrunk/Trunk/<trunk_id>/ --body '{"trunk_status":"disabled"}' --dry-run   # disabling a trunk stops calls: preview, record the current status, then --yes
+plivo sip trunks create --name <name> --direction inbound --uri <uri_uuid> --dry-run          # then --yes
+plivo sip trunks create --name <name> --direction outbound --credential <uuid> --dry-run      # or --ip-acl <uuid>; then --yes
+plivo sip trunks list --direction inbound -o json                                            # read-only
+plivo sip trunks get <trunk_id> -o json          # read-only: trunk_domain, trunk_status, secure, primary_uri_uuid
+plivo sip trunks update <trunk_id> --status disabled --dry-run   # disabling a trunk stops calls: preview, record the current status, then --yes
+plivo sip trunks delete <trunk_id> --dry-run     # reports how many numbers it would detach
 ```
 
 Errors on create: 400 invalid parameter, 401 bad auth, 422 missing conditional field (for example no `ipacl_uuid` or `credential_uuid` on an outbound trunk).
@@ -734,24 +735,24 @@ Errors on create: 400 invalid parameter, 401 bad auth, 422 missing conditional f
 `username` 5 to 20 alphanumeric; `password` 5 to 20 chars, alphanumeric plus `~!@#$%^&*()_+`, at least one special character; never returned. The same username and password go into the platform's outbound trunk; use the **username**, not the credential name. `ip_addresses` is an array, required on create, and an update replaces the whole list. Never `0.0.0.0/0`.
 
 ```bash
-plivo api POST /Zentrunk/Credential/ --body @cred.json --dry-run   # write the file first; never put the password on the command line
-plivo api POST /Zentrunk/Credential/ --body @cred.json --yes       # after approval
-plivo api GET  /Zentrunk/Credential/ -o json                       # read-only: data.objects[].credential_uuid, .username (no password)
-plivo api DELETE /Zentrunk/Credential/<credential_uuid>/ --dry-run # preview: this breaks any trunk using it
-plivo api DELETE /Zentrunk/Credential/<credential_uuid>/ --yes     # after approval
-plivo api POST /Zentrunk/IPAccessControlList/ --body @ipacl.json --dry-run   # preview, then --yes; an update replaces the whole list
-plivo api GET  /Zentrunk/IPAccessControlList/<ipacl_uuid>/ -o json    # read-only: .ip_addresses
+printf '%s' "$SIP_PASSWORD" | plivo sip credentials create --name <name> --username <u> --password-stdin --dry-run   # then --yes
+plivo sip credentials list -o json                                 # read-only: credential_uuid, username (no password)
+printf '%s' "$SIP_PASSWORD" | plivo sip credentials update <credential_uuid> --password-stdin --dry-run   # every update rewrites the password
+plivo sip credentials delete <credential_uuid> --dry-run           # names the trunks using it; then --yes after approval
+plivo sip ip-acl create --name <name> --ip <ip/cidr> --ip <ip/cidr> --dry-run   # then --yes
+plivo sip ip-acl update <ipacl_uuid> --ip <ip/cidr> --dry-run      # an update replaces the whole list
+plivo sip ip-acl get <ipacl_uuid> -o json                          # read-only: ip_addresses
 ```
 
 ### Calls (`/Zentrunk/Call/`): call records and quality
 
 ```bash
-plivo api GET /Zentrunk/Call/ --query limit=20 -o json                       # filters: call_direction, hangup_cause_code, hangup_source, from_number, to_number, end_time__gte
-plivo api GET /Zentrunk/Call/<call_uuid>/ -o json                            # hangup_cause_code, hangup_cause_name, hangup_source, transport_protocol, srtp, trunk_domain, stir_verification
-plivo api GET /Zentrunk/Call/<call_uuid>/Insights/ -o json                   # rtt, jitter, packet_loss, plivo_quality_score
+plivo sip calls list -o json            # filters: --direction, --hangup-cause-code, --hangup-source, --from-number, --to-number, --since, --until
+plivo sip calls get <call_uuid> -o json  # hangup_cause_code, hangup_cause_name, hangup_source, transport_protocol, srtp, trunk_domain, stir_verification
+plivo api GET /Zentrunk/Call/<call_uuid>/Insights/ -o json   # rtt, jitter, packet_loss, plivo_quality_score (no typed command yet)
 ```
 
-`plivo voice calls list|get` read the Voice API, not SIP trunking call records. `plivo voice calls diagnose <uuid>` is built for Voice API calls; whether it accepts a trunk call UUID is **not verified**. Try it once; it is rate limited together with `plivo ask`, so do not loop it.
+`plivo voice calls list|get|diagnose` read the Voice API, not SIP trunking call records; use `plivo sip calls list|get|diagnose` for trunk calls. `sip calls diagnose` depends on server-side support and can report that the call could not be retrieved. Try it once; it is rate limited together with `plivo ask`, so do not loop it.
 
 How `plivo numbers get` renders a trunk-attached number's `application` field is **not verified** on a live account; accept a URL containing `Trunk/<id>`, a bare id, or an `Application/<id>` URL, and say so when it is none of those.
 
@@ -761,7 +762,7 @@ Not available over the API: geo permissions (console), CPS increases (Plivo supp
 
 Every row comes from the public table <https://www.plivo.com/docs/sip-trunking/troubleshooting/zentrunk-hangup-codes> unless another page is named.
 
-Where to read a code: `plivo api GET /Zentrunk/Call/<uuid>/ -o json` gives `hangup_cause_code`, `hangup_cause_name`, `hangup_source` (`customer` = your platform, `carrier` = the network side, `zentrunk` = Plivo). The final SIP response on the platform leg and the message flow are in the console: Zentrunk, Logs, the call, SIP logs (<https://www.plivo.com/docs/sip-trunking/troubleshooting/zentrunk-debug-logs>). Trust the hangup code for Plivo's conclusion and the SIP flow for what the platform said; the two can disagree.
+Where to read a code: `plivo sip calls get <uuid> -o json` gives `hangup_cause_code`, `hangup_cause_name`, `hangup_source` (`customer` = your platform, `carrier` = the network side, `zentrunk` = Plivo). The final SIP response on the platform leg and the message flow are in the console: Zentrunk, Logs, the call, SIP logs (<https://www.plivo.com/docs/sip-trunking/troubleshooting/zentrunk-debug-logs>). Trust the hangup code for Plivo's conclusion and the SIP flow for what the platform said; the two can disagree.
 
 Owner values: **platform config** = the AI platform or your SIP server side; **customer Plivo config** = your trunk, URI, credential, number or account setup on Plivo; **Plivo policy** = Plivo refused on account or regulatory grounds; **Plivo** = Plivo-side handling; **carrier/destination** = the network or callee; **caller**; **expected outcome**.
 
@@ -896,20 +897,20 @@ Do not guess, and do not fill the gap from general knowledge of other platforms.
 
 Treat the answer as evidence, not as final. If it contradicts the documentation, say that it does and prefer the documentation for published behaviour. If it gives a number the documentation does not publish, repeat it as something the assistant said, not as a documented fact.
 
-For account state read it yourself with `plivo api GET ... -o json`, and for one specific call read the console SIP logs. For CLI behaviour `plivo <command> --help` outranks this file: if the two disagree, the CLI is right and this file needs updating, and you should say so. Rules marked here as observed rather than documented are safe checks, not Plivo commitments. Never invent flags, API fields, hangup codes or platform IPs. Where Plivo's pages disagree with each other (4560 vs 4650, `user_cancelled` vs `customer_cancelled`, RTP port range, CPS queue vs reject, API examples without `;transport=`), this file names both and which one it follows.
+For account state read it yourself with the read-only `plivo sip ... get|list` and `plivo numbers get` commands, and for one specific call read the console SIP logs. For CLI behaviour `plivo <command> --help` outranks this file: if the two disagree, the CLI is right and this file needs updating, and you should say so. Rules marked here as observed rather than documented are safe checks, not Plivo commitments. Never invent flags, API fields, hangup codes or platform IPs. Where Plivo's pages disagree with each other (4560 vs 4650, `user_cancelled` vs `customer_cancelled`, RTP port range, CPS queue vs reject, API examples without `;transport=`), this file names both and which one it follows.
 
 ## CANNOT
 
-- **Cannot write Plivo XML.** A SIP trunk hands the call to your platform. There is no answer URL and no XML on this path. If you came here looking for XML, that is a separate install: `npx skills add https://www.plivo.com/docs --skill plivo-voice-xml`, or read <https://www.plivo.com/docs/voice/xml/overview>. For a WebSocket bot, `--skill plivo-audio-streaming`.
-- **Cannot invent CLI flags.** There is no `plivo sip ...`, no `numbers update --trunk-id`, no trunk, URI, credential or IP-list command, no geo-permissions command. Trunk objects go through `plivo api <METHOD> /Zentrunk/...`; geo permissions, CPS increases, the SIP flow and PCAP are console or support only. Say so.
+- **Cannot write Plivo XML.** A SIP trunk hands the call to your platform. There is no answer URL and no XML on this path. If you came here looking for XML, that is a separate install: `plivo skill install voice-xml`, or read <https://www.plivo.com/docs/voice/xml/overview>. For a WebSocket bot, `plivo skill install audio-streaming`.
+- **Cannot invent CLI flags.** Use `plivo sip --help` and `plivo <command> --help` for the real flags. There is no geo-permissions command and no typed call-Insights command (`plivo api GET /Zentrunk/Call/<uuid>/Insights/`); geo permissions, CPS increases, the SIP flow and PCAP are console or support only. Say so.
 - **Cannot infer account state.** Look the number, trunk, URI, credentials and IP lists up with the readiness checklist; never assume a number is attached, a trunk enabled, a URI's transport right, or KYC accepted.
 - **Cannot treat an accepted API request as a working call.** `Trunk created successfully` means the object exists. A call works when the record shows 3000/3010 with a non-zero duration and the SIP flow shows the platform answering 200. Test both directions.
-- **Cannot spend or reconfigure without a preview.** Before `numbers update --app-id`, `numbers buy`, or any `plivo api POST|DELETE --yes`, show the exact request (`--dry-run`) and the rollback (`plivo numbers update <number> --app-id <previous>`; for trunks the previous field values). Deleting a URI or credential attached to a live trunk breaks calls at once.
+- **Cannot spend or reconfigure without a preview.** Before `numbers update --trunk-id` or `--app-id`, `numbers buy`, any `plivo sip ... create|update|delete --yes`, or any `plivo api POST|DELETE --yes`, show the exact request (`--dry-run`) and the rollback (`plivo numbers update <number> --app-id <previous>` or `--trunk-id <previous>`; for trunks the previous field values). Deleting a URI or credential attached to a live trunk breaks calls at once.
 - **Cannot fill in or submit KYC.** Business details and documents come from the user; a compliance application is a regulatory filing and is submitted only when the user says so.
 - **Cannot see the platform side.** Dispatch rules, number imports, agent bindings, region pinning, platform egress IPs: ask, then verify with a call.
-- **Cannot invent API fields.** The Origination URI API documents `uri`, `authentication_needed`, `username` and `password`. Do not send anything else and do not tell a customer a field exists because another platform has one. Read the URI back with `GET /Zentrunk/URI/<uuid>/` after every create.
-- **Cannot present an undocumented platform as supported.** Plivo publishes guides for LiveKit, ElevenLabs, Retell, Vapi and a generic self-hosted path. For anything else, including OpenAI Realtime and xAI, say Plivo does not document it and get the values from that platform and from Plivo.
-- **Cannot promise that `plivo voice calls diagnose` understands trunk calls,** or that any transfer target form other than the documented one keeps working.
-- **Cannot handle credentials.** Passwords go in a file passed with `--body @file`, never on the command line, in chat, or in this skill's output; Plivo never returns them.
+- **Cannot invent API fields.** The Origination URI API documents `uri`, `authentication_needed`, `username` and `password`. Do not send anything else and do not tell a customer a field exists because another platform has one. Read the URI back with `plivo sip uris get <uuid>` after every create.
+- **Cannot present an undocumented platform as supported.** Plivo publishes guides for LiveKit, ElevenLabs, Retell, Vapi, xAI Voice Agents and a generic self-hosted path. For anything else, including OpenAI Realtime, say Plivo does not document it and get the values from that platform and from Plivo.
+- **Cannot promise that `plivo sip calls diagnose` returns an analysis** (it depends on server-side support), or that any transfer target form other than the documented one keeps working.
+- **Cannot handle credentials.** Passwords go to `--password-stdin` (or in a file passed with `--body @file` on the `plivo api` fallback), never on the command line, in chat, or in this skill's output; Plivo never returns them.
 
-This skill does not cover: PBX interconnection (3CX, Asterisk, FreeSWITCH, FreePBX, FusionPBX, Twilio BYOC), carrier routing and rates, WebSocket Audio Streaming (separate install, `npx skills add https://www.plivo.com/docs --skill plivo-audio-streaming`), Voice API `<Dial>` and transfer flows and Plivo XML (separate install, `--skill plivo-voice-xml`), SMS, number porting, or how any agent platform works inside. It cannot see your platform's logs or your Plivo account's data except through the CLI commands it names.
+This skill does not cover: PBX interconnection (3CX, Asterisk, FreeSWITCH, FreePBX, FusionPBX, Twilio BYOC), carrier routing and rates, WebSocket Audio Streaming (separate install, `plivo skill install audio-streaming`), Voice API `<Dial>` and transfer flows and Plivo XML (separate install, `plivo skill install voice-xml`), SMS, number porting, or how any agent platform works inside. It cannot see your platform's logs or your Plivo account's data except through the CLI commands it names.

@@ -5,6 +5,20 @@ All notable changes to the Plivo CLI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The bundled `sip-trunking` skill now uses the typed `plivo sip` commands
+  (trunks, URIs, credentials, IP access control lists, call records) and
+  `numbers update --trunk-id`. It previously told agents the CLI had no SIP
+  commands and routed every step through raw `plivo api` calls, so agents
+  avoided the commands that validate input and keep passwords off the command
+  line. `plivo api` remains for call Insights and as a documented fallback.
+- The skill adds xAI Voice Agents (inbound, `sip.voice.x.ai;transport=tls`),
+  which now has a Plivo integration guide, and points to `plivo skill install`
+  for the other skills instead of `npx skills add`.
+
 ## [1.1.2] - 2026-09-22
 
 ### Changed
