@@ -3,6 +3,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,15 +71,49 @@ func Validate(format string) string {
 	return "unsupported output format '" + format + "'; supported: " + strings.Join(SupportedFormats, ", ")
 }
 
+// newEncoder returns the encoder every JSON writer here uses: two-space
+// indent and no HTML escaping. The output goes to terminals, pipes and
+// parsers, never into an HTML page, so escaping <, > and & only garbles
+// hints like `<name>` and the query strings of URLs from the API.
+func newEncoder(w io.Writer) *json.Encoder {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	return enc
+}
+
+// Marshal is json.Marshal without HTML escaping, for JSON built outside the
+// writers above that still ends up in front of the user.
+func Marshal(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// MarshalIndent is json.MarshalIndent without HTML escaping.
+func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
+	b, err := Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, b, prefix, indent); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // JSONSuccess writes {"data": data, "meta": meta?} pretty-printed to w.
 func JSONSuccess(w io.Writer, data any, meta any) error {
 	env := map[string]any{"data": data}
 	if meta != nil {
 		env["meta"] = meta
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(env)
+	return newEncoder(w).Encode(env)
 }
 
 // JSONRaw writes the upstream response verbatim under "data". json.RawMessage
@@ -130,9 +165,7 @@ func JSONError(w io.Writer, code, message, hint, requestID, docsURL string, retr
 		errObj["context"] = context
 	}
 	env := map[string]any{"error": errObj}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(env)
+	_ = newEncoder(w).Encode(env)
 }
 
 // PlainError writes a human-friendly error to w (usually stderr).
