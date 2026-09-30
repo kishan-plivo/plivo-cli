@@ -16,11 +16,7 @@ import (
 func atkFixture(t *testing.T) *httptest.Server {
 	t.Helper()
 	var ev atomic.Int64
-	auth := &streamAuth{
-		authToken: "test-auth-token",
-		answerURL: "https://tunnel.example/answer",
-		wsURL:     "wss://tunnel.example/ws",
-	}
+	auth := newStreamAuth("test-auth-token", "https://tunnel.example", false)
 	srv := buildLocalStreamServer(&strings.Builder{}, "wss://tunnel.example/ws",
 		"ws://127.0.0.1:1/ws", true, "mulaw", 8000, false, true, &ev, auth)
 	ts := httptest.NewServer(srv.Handler)

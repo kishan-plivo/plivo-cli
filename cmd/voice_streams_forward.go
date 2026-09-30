@@ -173,8 +173,13 @@ func runVoiceStreamsForward(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(out, "⠋ Local server on :%d\n", localPort)
 	}
 
-	// Cancel context drives a clean teardown end-to-end.
-	ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+	// Cancel context drives a clean teardown end-to-end. Closing the terminal
+	// restores too, unless SIGHUP is ignored (nohup), which keeps it running.
+	stopSignals := []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) {
+		stopSignals = append(stopSignals, syscall.SIGHUP)
+	}
+	ctx, cancel := signal.NotifyContext(cmd.Context(), stopSignals...)
 	defer cancel()
 
 	// --- Start the tunnel ---
@@ -212,12 +217,7 @@ func runVoiceStreamsForward(cmd *cobra.Command, _ []string) error {
 	// --- Start serving (HTTP for answer webhook, /ws for streaming) ---
 	var events atomic.Int64
 	wsTunnelURL := strings.Replace(tn.PublicURL, "https://", "wss://", 1) + "/ws"
-	auth := &streamAuth{
-		authToken: client.AuthToken,
-		answerURL: tunnelAnswerURL,
-		wsURL:     wsTunnelURL,
-		skip:      streamsFwdSkipSignature,
-	}
+	auth := newStreamAuth(client.AuthToken, tn.PublicURL, streamsFwdSkipSignature)
 	if streamsFwdSkipSignature && !jsonOut {
 		fmt.Fprintln(out, "⚠ --insecure-skip-signature: anyone with this tunnel URL can drive your handler.")
 	}
@@ -311,8 +311,21 @@ func runVoiceStreamsForward(cmd *cobra.Command, _ []string) error {
 type streamAuth struct {
 	authToken string
 	answerURL string // public https URL Plivo POSTs the answer webhook to
-	wsURL     string // public wss URL Plivo opens the stream against
+	wsURL     string // URL Plivo signs the stream upgrade over
 	skip      bool   // --insecure-skip-signature
+}
+
+// newStreamAuth derives the signed URLs from the tunnel's public https URL.
+// Plivo signs the stream upgrade over http://, not over the wss:// URL in the
+// XML: seen on live calls, and Plivo's Node stream SDK validates the same way
+// behind a TLS-terminating proxy.
+func newStreamAuth(authToken, tunnelURL string, skip bool) *streamAuth {
+	return &streamAuth{
+		authToken: authToken,
+		answerURL: tunnelURL + "/answer",
+		wsURL:     strings.Replace(tunnelURL, "https://", "http://", 1) + "/ws",
+		skip:      skip,
+	}
 }
 
 // ok reports whether r carries a valid signature for publicURL.
@@ -386,7 +399,7 @@ func buildLocalStreamServer(out io.Writer, wssTunnelURL, customerWS string, bidi
 		}
 		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Stream%s contentType="%s">%s</Stream>
+  <Stream%s keepCallAlive="true" contentType="%s">%s</Stream>
 </Response>`, bidiAttr, wsproxy.ContentType(codec, rate), wssTunnelURL)
 	})
 
