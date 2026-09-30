@@ -35,7 +35,7 @@ func TestBuildLocalStreamServer_answerXML(t *testing.T) {
 			bidi:     false,
 			codec:    "mulaw",
 			rate:     8000,
-			wantSubs: []string{`contentType="audio/x-mulaw;rate=8000"`, "wss://abc.ngrok.dev/ws"},
+			wantSubs: []string{`contentType="audio/x-mulaw;rate=8000"`, "wss://abc.ngrok.dev/ws", `keepCallAlive="true"`},
 			denySubs: []string{`bidirectional="true"`, "sampleRate"},
 		},
 		{
@@ -43,7 +43,7 @@ func TestBuildLocalStreamServer_answerXML(t *testing.T) {
 			bidi:     true,
 			codec:    "l16",
 			rate:     16000,
-			wantSubs: []string{`bidirectional="true"`, `contentType="audio/x-l16;rate=16000"`},
+			wantSubs: []string{`bidirectional="true"`, `contentType="audio/x-l16;rate=16000"`, `keepCallAlive="true"`},
 			denySubs: []string{"sampleRate", `contentType="audio/l16"`},
 		},
 	}

@@ -18,12 +18,7 @@ const authTestToken = "test-auth-token"
 func authFixture(t *testing.T) (*httptest.Server, *streamAuth, *atomic.Int64) {
 	t.Helper()
 	var events atomic.Int64
-	// Public URLs the CLI would have set on the application.
-	auth := &streamAuth{
-		authToken: authTestToken,
-		answerURL: "https://tunnel.example/answer",
-		wsURL:     "wss://tunnel.example/ws",
-	}
+	auth := newStreamAuth(authTestToken, "https://tunnel.example", false)
 	srv := buildLocalStreamServer(&strings.Builder{}, "wss://tunnel.example/ws",
 		"ws://127.0.0.1:1/ws", true, "mulaw", 8000, false, true, &events, auth)
 	ts := httptest.NewServer(srv.Handler)
@@ -86,6 +81,29 @@ func TestUnsignedWebSocketIsRejected(t *testing.T) {
 		conn.Close(websocket.StatusNormalClosure, "")
 		t.Fatal("unsigned WebSocket upgrade succeeded; the bridge is still open")
 	}
+}
+
+// Plivo signs the upgrade over http://tunnel.example/ws for the stream URL
+// wss://tunnel.example/ws. Checking the wss:// form refused every real call.
+func TestWebSocketSignedAsPlivoSignsIsAccepted(t *testing.T) {
+	ts, _, _ := authFixture(t)
+	nonce := "12345678901234567890"
+	sig, err := plivosig.Compute(authTestToken, "http://tunnel.example/ws", http.MethodGet, nonce, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := strings.Replace(ts.URL, "http://", "ws://", 1) + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{
+		plivosig.HeaderSignature: {sig},
+		plivosig.HeaderNonce:     {nonce},
+	}})
+	if err != nil {
+		t.Fatalf("upgrade signed the way Plivo signs it was refused: %v", err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "")
 }
 
 // The escape hatch has to work, or a signature-scheme mismatch in the field
