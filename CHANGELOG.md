@@ -5,6 +5,18 @@ All notable changes to the Plivo CLI are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `plivo voice streams forward` now exits with an error when it cannot put the
+  application's answer URL back, instead of printing "All cleaned up". The
+  error names the original URL and method and is not retryable, because a
+  second run would save the dead tunnel URL as the original. With `-o json`
+  this failure is now an error envelope with a non-zero exit, and the
+  `restore_error` field is gone. The manual restore hint sets the answer
+  method as well as the URL, and quotes the URL.
+
 ## [1.1.3] - 2026-10-01
 
 ### Added

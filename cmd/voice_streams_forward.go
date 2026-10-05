@@ -77,7 +77,6 @@ type streamsFwdResult struct {
 	AppID          string `json:"app_id"`
 	TunnelURL      string `json:"tunnel_url"`
 	Restored       bool   `json:"restored"`
-	RestoreError   string `json:"restore_error,omitempty"`
 	EventsObserved int64  `json:"events_observed"`
 }
 
@@ -248,53 +247,98 @@ func runVoiceStreamsForward(cmd *cobra.Command, _ []string) error {
 	_ = srv.Shutdown(shutdownCtx)
 	shutdownCancel()
 
-	var restored bool
-	var restoreErr string
-	if !streamsFwdKeep {
-		if !jsonOut {
-			fmt.Fprintf(out, "  Restoring answer_url on %q...", app.AppName)
-		}
-		restoreBody := map[string]interface{}{
-			"answer_url":    originalAnswerURL,
-			"answer_method": app.AnswerMethod,
-		}
-		if apiErr, err := client.Do("POST", client.AccountURL("Application", streamsFwdAppID), restoreBody, nil, nil); err != nil {
-			restoreErr = err.Error()
-			if !jsonOut {
-				fmt.Fprintf(out, " ✗ FAILED: %v\n", err)
-				fmt.Fprintf(out, "  Manual restore: plivo account applications update %s --answer-url %s\n",
-					streamsFwdAppID, originalAnswerURL)
-			}
-		} else if apiErr != nil {
-			restoreErr = apiErr.Message
-			if !jsonOut {
-				fmt.Fprintf(out, " ✗ %s\n", apiErr.Message)
-				fmt.Fprintf(out, "  Manual restore: plivo account applications update %s --answer-url %s\n",
-					streamsFwdAppID, originalAnswerURL)
-			}
-		} else {
-			restored = true
-			if !jsonOut {
-				fmt.Fprintf(out, " done.\n")
-			}
-		}
-	} else if !jsonOut {
-		fmt.Fprintf(out, "  --keep set; answer_url left at %s\n", tunnelAnswerURL)
-		fmt.Fprintf(out, "  Manual restore: plivo account applications update %s --answer-url %s\n",
-			streamsFwdAppID, originalAnswerURL)
-	}
+	return finishForward(out, client, forwardTeardown{
+		appID:           streamsFwdAppID,
+		appName:         app.AppName,
+		originalURL:     originalAnswerURL,
+		originalMethod:  app.AnswerMethod,
+		tunnelURL:       tn.PublicURL,
+		tunnelAnswerURL: tunnelAnswerURL,
+		keep:            streamsFwdKeep,
+		jsonOut:         jsonOut,
+		events:          events.Load(),
+	})
+}
 
-	if jsonOut {
-		return output.JSONSuccess(os.Stdout, streamsFwdResult{
-			AppID:          streamsFwdAppID,
-			TunnelURL:      tn.PublicURL,
-			Restored:       restored,
-			RestoreError:   restoreErr,
-			EventsObserved: events.Load(),
+// forwardTeardown is what finishForward needs once the tunnel has stopped.
+type forwardTeardown struct {
+	appID, appName              string
+	originalURL, originalMethod string
+	tunnelURL, tunnelAnswerURL  string
+	keep, jsonOut               bool
+	events                      int64
+}
+
+// finishForward restores the application's answer URL (unless --keep) and
+// prints the closing summary. A failed restore returns an error and prints no
+// summary: a clean exit would hide that every number on the application still
+// points at the closed tunnel.
+func finishForward(out io.Writer, client *api.Client, t forwardTeardown) error {
+	if t.keep {
+		if !t.jsonOut {
+			fmt.Fprintf(out, "  --keep set; answer_url left at %s\n", t.tunnelAnswerURL)
+			fmt.Fprintf(out, "  Manual restore: %s\n", manualRestoreCommand(t.appID, t.originalURL, t.originalMethod))
+		}
+	} else {
+		if !t.jsonOut {
+			fmt.Fprintf(out, "  Restoring answer_url on %q...", t.appName)
+		}
+		if failure := restoreAnswerURL(client, t.appID, t.originalURL, t.originalMethod); failure != nil {
+			if !t.jsonOut {
+				fmt.Fprintf(out, " failed.\n")
+			}
+			return failure
+		}
+		if !t.jsonOut {
+			fmt.Fprintf(out, " done.\n")
+		}
+	}
+	if t.jsonOut {
+		return output.JSONSuccess(out, streamsFwdResult{
+			AppID:          t.appID,
+			TunnelURL:      t.tunnelURL,
+			Restored:       !t.keep,
+			EventsObserved: t.events,
 		}, nil)
 	}
 	fmt.Fprintf(out, "✓ All cleaned up.\n")
 	return nil
+}
+
+// restoreAnswerURL puts the application's original answer URL and method back.
+// On failure, the message and context carry both values, because the global
+// error handler replaces the hint of an auth error. The error is a
+// non-retryable USER_ERROR: running forward again would save the dead tunnel
+// URL as the "original" and lose the real one.
+func restoreAnswerURL(client *api.Client, appID, answerURL, answerMethod string) *clierr.Error {
+	target := client.AccountURL("Application", appID)
+	body := map[string]interface{}{"answer_url": answerURL, "answer_method": answerMethod}
+	apiErr, err := client.Do("POST", target, body, nil, nil)
+	var cause string
+	switch {
+	case err != nil:
+		cause = fmt.Sprintf("could not reach %s: %v", target, err)
+	case apiErr != nil:
+		cause = apiErr.Message
+		if cause == "" {
+			cause = fmt.Sprintf("HTTP %d", apiErr.StatusCode)
+		}
+	default:
+		return nil
+	}
+	return &clierr.Error{
+		Code:    clierr.CodeUserError,
+		Message: fmt.Sprintf("could not restore application %s to answer URL %s (%s): %s", appID, answerURL, answerMethod, cause),
+		Hint:    "Restore it before you run forward again: " + manualRestoreCommand(appID, answerURL, answerMethod),
+		Context: map[string]any{"app_id": appID, "answer_url": answerURL, "answer_method": answerMethod},
+	}
+}
+
+// manualRestoreCommand puts the answer URL and method back, with the URL
+// quoted for the shell (answer URLs can carry `&` and `?`).
+func manualRestoreCommand(appID, answerURL, answerMethod string) string {
+	return fmt.Sprintf("plivo account applications update %s --answer-url '%s' --answer-method %s",
+		appID, strings.ReplaceAll(answerURL, "'", `'\''`), answerMethod)
 }
 
 // streamAuth validates Plivo's V3 signature on the tunnel-exposed handlers.

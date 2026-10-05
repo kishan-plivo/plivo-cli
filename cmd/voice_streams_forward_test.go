@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/plivo/plivo-cli/internal/api"
+	"github.com/plivo/plivo-cli/internal/clierr"
 )
 
 // /answer must return PlivoXML referencing the supplied wss URL and codec.
@@ -403,5 +405,78 @@ func TestNumbersAffectedWarning_fetchFailureDegrades(t *testing.T) {
 	got := numbersAffectedWarning(client, "APP123")
 	if !strings.Contains(got, "could not determine") {
 		t.Errorf("expected the degrade message, got: %q", got)
+	}
+}
+
+// A failed restore leaves every number on the app pointing at a closed tunnel.
+// forward must not report a clean exit, must not invite a retry (a second run
+// would save the dead tunnel URL as the "original"), and must keep the original
+// URL and method in the message, because the global handler rewrites the hint
+// of an auth error.
+func TestFinishForward_failedRestoreIsNotACleanExit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid application"}`)
+	}))
+	defer srv.Close()
+	client := &api.Client{BaseURL: srv.URL, AuthID: "MAFAKEFORTEST", AuthToken: "fake-token", HTTP: &http.Client{}}
+	var out bytes.Buffer
+
+	err := finishForward(&out, client, forwardTeardown{
+		appID: "123", appName: "demo", originalURL: "https://example.com/a?x=1&y=2", originalMethod: "GET",
+	})
+	var ce *clierr.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("a rejected restore returned %v, want a *clierr.Error", err)
+	}
+	if strings.Contains(out.String(), "All cleaned up") {
+		t.Errorf("printed a clean exit after a failed restore:\n%s", out.String())
+	}
+	if ce.Retryable || ce.Code != clierr.CodeUserError {
+		t.Errorf("code %s retryable %v: a retry would overwrite the original URL", ce.Code, ce.Retryable)
+	}
+	if !strings.Contains(ce.Message, "https://example.com/a?x=1&y=2") || !strings.Contains(ce.Message, "GET") {
+		t.Errorf("message %q lost the original URL or method", ce.Message)
+	}
+	if want := "--answer-url 'https://example.com/a?x=1&y=2' --answer-method GET"; !strings.Contains(ce.Hint, want) {
+		t.Errorf("hint %q, want the quoted URL and the method (%q)", ce.Hint, want)
+	}
+}
+
+func TestFinishForward_restoresURLAndMethod(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		fmt.Fprint(w, `{"message":"changed"}`)
+	}))
+	defer srv.Close()
+	client := &api.Client{BaseURL: srv.URL, AuthID: "MAFAKEFORTEST", AuthToken: "fake-token", HTTP: &http.Client{}}
+	var out bytes.Buffer
+
+	err := finishForward(&out, client, forwardTeardown{
+		appID: "123", appName: "demo", originalURL: "https://example.com/answer", originalMethod: "GET",
+	})
+	if err != nil {
+		t.Fatalf("restore against a 200 returned %v", err)
+	}
+	if got["answer_url"] != "https://example.com/answer" || got["answer_method"] != "GET" {
+		t.Errorf("restore sent %v, want the original answer_url and answer_method", got)
+	}
+	if !strings.Contains(out.String(), "All cleaned up") {
+		t.Errorf("no clean-exit summary after a successful restore:\n%s", out.String())
+	}
+}
+
+func TestRestoreAnswerURL_unreachableAPIIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close()
+	client := &api.Client{BaseURL: srv.URL, AuthID: "MAFAKEFORTEST", AuthToken: "fake-token", HTTP: &http.Client{}}
+
+	failure := restoreAnswerURL(client, "123", "https://example.com/answer", "POST")
+	if failure == nil {
+		t.Fatal("restore against a closed server returned no error")
+	}
+	if !strings.Contains(failure.Message, "https://example.com/answer") {
+		t.Errorf("message %q lost the original URL", failure.Message)
 	}
 }
