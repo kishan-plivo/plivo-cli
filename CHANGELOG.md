@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The `first-agent` skill: the audio-streaming flow replaces it. A
-  `plivo-first-agent` folder installed by v1.1.3 stays on disk until you
-  delete it.
+- The `first-agent` skill: the audio-streaming flow replaces it. Installing
+  audio-streaming into the default skills folder (`plivo skill install` or
+  `skills.sh`) removes the `plivo-first-agent` skill that v1.1.3 put there.
 
 ## [1.1.3] - 2026-10-01
 
