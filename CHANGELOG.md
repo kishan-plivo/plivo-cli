@@ -32,8 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `plivo login` can now finish when the browser can't reach the terminal
   (SSH, WSL, containers, VMs): while it waits, paste the callback URL from the
   browser's address bar. It goes through the same state check as the
-  redirect, and the PKCE verifier never leaves the CLI. A host on a different
-  network from the browser still can't log in this way.
+  redirect, and the PKCE verifier is never shown to the browser. A host on a
+  different network from the browser still can't log in this way.
 
 ### Changed
 
